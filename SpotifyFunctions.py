@@ -297,7 +297,7 @@ def Correlation(Df, PlotVars, Title):
     fig.update_annotations(
     font = dict(color="Black", size=14))
 
-    fig.show()
+    fig.show(renderer="png", height=900, width=900)
 
 
 def BarPlot(DataFrame, Title):
