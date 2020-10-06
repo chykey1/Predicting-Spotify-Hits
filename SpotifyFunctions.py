@@ -216,7 +216,7 @@ def BinVariable(Df, Target, Variable, BinOut, Trend = "auto_asc_desc"):
 
     fig.add_trace(
         go.Line(
-            y=Bins["Event rate"][0:len(BinsValues)+1]*100 #EventRate = IsNotGraduatedRate
+            y=Bins["Event rate"][0:len(BinsValues)+1]*100
             , x=Bins["Bin"][0:len(BinsValues)+1]
             , name=str(Target) + " Rate"
             , showlegend= True
