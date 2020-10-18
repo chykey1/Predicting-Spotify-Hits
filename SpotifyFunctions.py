@@ -85,13 +85,11 @@ def Scatter(Df, PlotVar, Hue, Y, Title):
         zeroline = True
         , showgrid = True
         , title = PlotVar
-        #, range = [0.95*np.min(Df[PlotVar]), 1.05*np.max(Df[PlotVar])]
     )
 
     fig.update_yaxes(
         zeroline=True
         , showgrid=True
-        #, range = [0.95*np.min(Df[Y]), 1.05*np.max(Df[Y])]
         , title = Y)
     
     
@@ -116,10 +114,11 @@ def Distribution(Df, Target, Variable):
 
 
     fig.add_trace(
-        go.Line(
+        go.Scatter(
             y=Graph1[Target]*100
             , x=[Col.title() if type(Col) == "str" else Col for Col in Graph1.index.values]
             , name=Target
+            , mode="lines"
             , showlegend= True)
         , secondary_y = True)
 
@@ -176,92 +175,149 @@ def Distribution(Df, Target, Variable):
     fig.show(renderer="png", width=900, height=600)
 
 
+class VariableBinning():
+    '''
+    Class to bin a variable according to a selection of metrics.
+    :Attribute BinPlot: Plots Distribution vs. Event rate for a DataFrame with class Count columns and Event rate column.
+    :Attribute BinVariable: Fits OptBinning algorithm and prints summary plot along with BinPlot (For visualising)
+    :Attribute Transform: Fits and transforms variable, returns transformed series.
 
-def BinVariable(Df, Target, Variable, BinOut, Trend = "auto_asc_desc"):
-    Size = 0.01 #Picks minimum bin size
+    '''
     
-    OptB = OptimalBinning(name=Variable, dtype="numerical", solver="cp", max_n_prebins=100, monotonic_trend=Trend,
-                          min_prebin_size=Size, time_limit=30)
-
-    OptB.fit(Df[Variable], Df[Target])
+    def __init__(self, Df, Variable, Target, DType = "numerical"):
+        self.Temp = Df.copy()[[Variable, Target, "Track"]]
+        self.Variable = Variable
+        self.Target = Target
+        self.Mod = None
+        self.DType = DType
     
-    print(OptB.status)
+    def BinPlot(self, Graph):
+        '''
+        :Param Graph: Dataframe containing Class count columns and event rate column
+        '''
+        
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+ 
+        fig.add_trace(
+            go.Scatter(
+                y=Graph["EventRate"]*100
+                , x=[Col.title() if type(Col) == "str" else Col for Col in Graph.index.values]
+                , name=self.Target
+                , mode="lines+markers"
+                , showlegend= True)
+            , secondary_y = True)
     
-    BinsValues = OptB.splits #Where the splits are
-    BinningTable = OptB.binning_table
-    Bins = BinningTable.build()
-    Analysis = BinningTable.analysis() #Summary
-    
-    print(Analysis)
+        for Col in [str(self.Target)+" == 0", str(self.Target)+" == 1"]:
+            fig.add_trace(
+                go.Bar(
+                    y=Graph[Col]
+                    , x=[Col.title() if type(Col) == "str" else Col for Col in Graph.index.values]
+                    , name=Col
+                    , showlegend= True)
+                , secondary_y = False)
+ 
+        fig.update_xaxes(
+            zeroline = True
+            , showgrid = True
+            , title = self.Variable
+            , type='category' if self.DType == "categorical" else "-")
+ 
+        fig.update_yaxes(
+            zeroline=True
+            , showgrid=True
+            , title="Count"
+            , secondary_y = False)
+ 
+        fig.update_yaxes(
+            zeroline=True
+            , showgrid=False
+            , title=self.Target
+            , ticksuffix="%"
+            , range=[0, 100]
+            , secondary_y = True)
+ 
+        fig.update_layout(
+            title = dict(text= str(self.Variable) +" Distribution vs. " + str(self.Target), font=dict(color="Black", size=20))
+            , font = dict(color="Black", size=10)
+            , height = 600
+            , width = 900
+            , barmode='stack')
+        
+        fig.show()
+        
+        
+    def BinVariable(self, Trend = "auto_asc_desc", Method = "bins", ShowTable = False):
+        '''
+        :Param Trend: Default = "auto_asc_desc", sets the assumed trend for binning
+        :Param Method: Default = "bins", sets the desired transformation method.
+        '''
 
-    BinOut[Variable] = BinsValues
+        self.Mod = OptimalBinning(name=self.Variable, dtype=self.DType, solver="cp", max_n_prebins=100, monotonic_trend=Trend,
+                                min_prebin_size=0.01, time_limit=30)
+            
+        #Fit and record
+        self.Mod.fit(self.Temp[self.Variable], self.Temp[self.Target])
+        
+        BinningTable = self.Mod.binning_table
+        Table = BinningTable.build()
+        BinsValues = self.Mod.splits
 
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
+        if ShowTable == True:
+            #Print Status and Summary 
+            print(self.Mod.status)
+            print(BinningTable.analysis())
+        
+        self.Temp["Transformed"] = self.Mod.transform(self.Temp[self.Variable], metric = Method)
 
-    fig.add_trace(
-        go.Bar(
-            y=Bins["Non-event"][0:len(BinsValues)+1]
-            , x=Bins["Bin"][0:len(BinsValues)+1]
-            , name="Frequency " + str(Target) + " = 0"
-            , showlegend= True)
-        , secondary_y = False)
+        if ((self.DType == "numerical") & (Method != "woe")):
+            self.Temp["Transformed"] = self.Temp["Transformed"].apply(lambda s: tuple(float(x) for x in s.replace('[', '').replace(')', '').split(',')))
+            self.Temp["Transformed"] = self.Temp["Transformed"].apply(lambda x: x[0] + 1 if math.isinf(x[1]) else x[1])
+            
+        Graph = pd.pivot_table(self.Temp, index="Transformed", columns=self.Target, values = "Track", aggfunc="count")
+        Graph = Graph.rename({0: str(self.Target)+" == 0", 1: str(self.Target)+" == 1"}, axis=1)
+        
+        Graph1 = pd.pivot_table(self.Temp, index="Transformed", values=self.Target, aggfunc="mean")
 
-    fig.add_trace(
-        go.Bar(
-            y=Bins["Event"][0:len(BinsValues)+1]
-            , x=Bins["Bin"][0:len(BinsValues)+1]
-            , name="Frequency " + str(Target) + " = 1"
-            , showlegend= True)
-        , secondary_y = False)
+        Graph["EventRate"] = Graph1[self.Target]
+        
+        self.BinPlot(Graph)
+        
+        
+    def Transform(self, Df = None, Method = 'woe'):
+        '''
+        :Param Trend: Default = "auto_asc_desc", sets the assumed trend for binning
+        :Param Method: Default = "bins", sets the desired transformation method.
+        '''
+        
+        if Df is not None:
+            DataFrame = Df.copy()
+            DataFrame = DataFrame[[self.Variable]]
+            
+            DataFrame["Transformed"] = self.Mod.transform(DataFrame[self.Variable], metric = Method)
+            
+            
+            return DataFrame["Transformed"]
+        
+        
+        else:
+            self.Temp["Transformed"] = self.Mod.transform(self.Temp[self.Variable], metric = Method)
+            
+            Graph = pd.pivot_table(self.Temp, index="Transformed", columns=self.Target, values = "Track", aggfunc="count")
+            Graph = Graph.rename({0: str(self.Target)+" == 0", 1: str(self.Target)+" == 1"}, axis=1)
 
-    fig.add_trace(
-        go.Line(
-            y=Bins["Event rate"][0:len(BinsValues)+1]*100 #EventRate = IsNotGraduatedRate
-            , x=Bins["Bin"][0:len(BinsValues)+1]
-            , name=str(Target) + " Rate"
-            , showlegend= True
-            , connectgaps = True)
-        , secondary_y = True)
+            Graph1 = pd.pivot_table(self.Temp, index="Transformed", values=self.Target, aggfunc="mean").sort_values(by=self.Target, ascending=False)
 
+            Graph = Graph.reindex(Graph1.index)
+            Graph["EventRate"] = Graph1[self.Target]
 
-    fig.update_xaxes(
-        zeroline = True
-        , showgrid = True
-        , title = Variable
-        , tickmode = 'linear')
-
-
-    fig.update_yaxes(
-        zeroline=True
-        , showgrid=True
-        , title="Frequency"
-        , secondary_y = False)
-
-    fig.update_yaxes(
-        zeroline=True
-        , showgrid=False
-        , title=str(Target) + " Rate"
-        , ticksuffix="%"
-        , range=[0, 100]
-        , secondary_y = True)
-
-
-    fig.update_layout(
-        title = dict(text= Variable +" Distribution vs. " + str(Target), font=dict(color="Black", size=20))
-        , font = dict(color="Black", size=10)
-        , height = 600
-        , width = 900
-        , legend_title='Period'
-        , barmode='stack')
-
-
-    fig.update_annotations(
-    font = dict(color="Black", size=14))
-
-    fig.show(renderer="png", width=900, height=600)
-    
-    return BinOut
-
+            self.BinPlot(Graph)
+            
+            return self.Temp["Transformed"]
+            
+        
+        
+        
+  
 
 def Correlation(Df, PlotVars, Title): 
     
@@ -337,3 +393,20 @@ def BarPlot(DataFrame, Title):
     font = dict(color="Black", size=14))
 
     fig.show(renderer="png", width=900, height=600)
+    
+    
+    
+def InformationValue(Df, Variable, Target):
+    '''
+    Computes the information for a given dataframe feature w.r.t a target/dependent variable.
+    '''
+    Pivot = pd.pivot_table(Df, index=Variable, values="Track", columns=Target, aggfunc="count").reset_index()
+    Pivot = Pivot.rename({0:"Flops", 1:"Hits"}, axis=1)
+    Pivot["Flops"] = Pivot["Flops"] / Pivot["Flops"].sum()
+    Pivot["Hits"] = Pivot["Hits"] / Pivot["Hits"].sum() 
+
+    Pivot["IV"] = Pivot["Flops"] - Pivot["Hits"] 
+    Pivot["IV"] = Pivot["IV"]*Pivot[Variable]
+
+    
+    return Pivot["IV"].sum()
